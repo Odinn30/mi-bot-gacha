@@ -31,7 +31,7 @@ RAREZAS = {
 }
 
 CARTAS = [
-    {"id": "c1", "nombre": "Culona de Prueba", "rareza": "B", "foto": "[https://t.me/WaifuGachaArchivePrivate/2?size=l](https://t.me/WaifuGachaArchivePrivate/2?size=l).jpg"},
+    {"id": "c1", "nombre": "Culona de Prueba", "rareza": "B", "foto": "https://i.postimg.cc/027Xb6JN/HOD1Oyza4AAYo-Dw.jpg"},
     {"id": "c2", "nombre": "Mago del Bosque", "rareza": "A", "foto": "https://t.me/c/4347933087/26"},
     {"id": "c3", "nombre": "Caballero Oscuro", "rareza": "S", "foto": "https://t.me/c/4347933087/26"},
     {"id": "c4", "nombre": "Reina Celestial", "rareza": "SSS", "foto": "https://t.me/c/4347933087/26"},
