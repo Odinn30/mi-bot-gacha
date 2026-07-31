@@ -31,7 +31,7 @@ RAREZAS = {
 }
 
 CARTAS = [
-    {"id": "c1", "nombre": "Culona de Prueba", "rareza": "B", "foto": "https://t.me/c/2168156810/254"},
+    {"id": "c1", "nombre": "Culona de Prueba", "rareza": "B", "foto": "https://t.me/c/4347933087/26"},
     {"id": "c2", "nombre": "Mago del Bosque", "rareza": "A", "foto": "https://i.imgur.com/EJEMPLO2.jpg"},
     {"id": "c3", "nombre": "Caballero Oscuro", "rareza": "S", "foto": "https://i.imgur.com/EJEMPLO3.jpg"},
     {"id": "c4", "nombre": "Reina Celestial", "rareza": "SSS", "foto": "https://i.imgur.com/EJEMPLO4.jpg"},
