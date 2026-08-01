@@ -37,7 +37,7 @@ threading.Thread(target=run_dummy_server, daemon=True).start()
 # ⚠️ CAMBIA ESTE NÚMERO POR TU ID REAL DE TELEGRAM
 ADMIN_ID = 5352886076 
 
-# Configuraciones de Drops Automáticos (Modifica según tu gusto)
+# Configuraciones de Drops Automáticos
 MENSAJES_PARA_DROP = 20    # Dropea una carta cada X mensajes en el chat
 MINUTOS_PARA_DROP = 45     # Dropea una carta si pasan X minutos sin importar la actividad
 
@@ -50,8 +50,8 @@ RAREZAS = {
 }
 
 CARTAS = [
-    {"id": "c1", "nombre": "Egirl Culona", "rareza": "B", "foto": "https://i.postimg.cc/FsPpfjHh/IMG-20260731-200022-446.jpg"},
-    {"id": "c2", "nombre": "Nekotina", "rareza": "A", "foto": "https://i.postimg.cc/dtW678Vw/IMG-20260731-200048-385.jpg"},
+    {"id": "c1", "nombre": "Guerrera Novata", "rareza": "B", "foto": "https://i.imgur.com/EJEMPLO1.jpg"},
+    {"id": "c2", "nombre": "Mago del Bosque", "rareza": "A", "foto": "https://i.imgur.com/EJEMPLO2.jpg"},
     {"id": "c3", "nombre": "Caballero Oscuro", "rareza": "S", "foto": "https://i.imgur.com/EJEMPLO3.jpg"},
     {"id": "c4", "nombre": "Reina Celestial", "rareza": "SSS", "foto": "https://i.imgur.com/EJEMPLO4.jpg"},
     {"id": "c5", "nombre": "Deidad Suprema UR", "rareza": "UR", "foto": "https://i.imgur.com/EJEMPLO5.jpg"},
@@ -71,6 +71,14 @@ def elegir_carta_aleatoria():
         peso = int(rareza_info["peso"] * 10)
         pool.extend([carta] * peso)
     return random.choice(pool)
+
+async def auto_borrar_comando(update: Update):
+    """Función auxiliar para borrar el mensaje del comando y evitar spam."""
+    if update.message and update.effective_chat.type in ["group", "supergroup"]:
+        try:
+            await update.message.delete()
+        except Exception:
+            pass  # Si no tiene permisos de admin para borrar, ignora el error
 
 async def ejecutar_drop(bot, chat_id, carta_forzada=None, motivo=""):
     if carta_forzada:
@@ -117,6 +125,7 @@ def reiniciar_temporizador_chat(app_or_context, chat_id):
 # ==============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await auto_borrar_comando(update)
     chat_id = update.effective_chat.id
     reiniciar_temporizador_chat(context, chat_id)
     await update.message.reply_text(
@@ -131,6 +140,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def drop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await auto_borrar_comando(update)
     chat_id = update.effective_chat.id
     user = update.effective_user
     args = context.args
@@ -140,7 +150,10 @@ async def drop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         carta_id = args[0]
         carta_forzada = next((c for c in CARTAS if c["id"] == carta_id), None)
         if not carta_forzada:
-            await update.message.reply_text(f"❌ No existe ninguna carta con el ID `{carta_id}`.")
+            msg = await context.bot.send_message(chat_id, f"❌ No existe ninguna carta con el ID `{carta_id}`.")
+            await asyncio.sleep(5)
+            try: await msg.delete()
+            except: pass
             return
 
     await ejecutar_drop(context.bot, chat_id, carta_forzada=carta_forzada)
@@ -190,19 +203,30 @@ async def claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await auto_borrar_comando(update)
     user = update.effective_user
     chat_id = update.effective_chat.id
     user_cards = inventarios.get(user.id, [])
 
+    # Intento seguro de borrar el mensaje anterior de inventario
     if user.id in ultimo_mensaje_inv:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=ultimo_mensaje_inv[user.id])
         except Exception:
             pass
 
+    nombre_usuario = user.username or user.first_name
+
     if not user_cards:
-        msg = await update.message.reply_text(f"📦 **Inventario de @{user.username or user.first_name}**\n\nNo tienes cartas en tu colección todavía. ¡Usa `/drop`!")
-        ultimo_mensaje_inv[user.id] = msg.message_id
+        try:
+            msg = await context.bot.send_message(
+                chat_id,
+                f"📦 **Inventario de @{nombre_usuario}**\n\n"
+                "No tienes cartas en tu colección todavía. ¡Usa `/drop` o presiona el botón cuando aparezca una!"
+            )
+            ultimo_mensaje_inv[user.id] = msg.message_id
+        except Exception as e:
+            logging.error(f"Error al enviar inventario vacío: {e}")
         return
 
     conteo = {"UR": 0, "SSS": 0, "S": 0, "A": 0, "B": 0}
@@ -210,7 +234,7 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if c["rareza"] in conteo:
             conteo[c["rareza"]] += 1
 
-    texto = f"📦 **COLECCIÓN DE CARTAS: @{user.username or user.first_name}**\n"
+    texto = f"📦 **COLECCIÓN DE CARTAS: @{nombre_usuario}**\n"
     texto += f"📊 **Total de cartas:** {len(user_cards)}\n"
     texto += "----------------------------------\n"
     texto += f"🌟 UR: {conteo['UR']} | ⭐⭐⭐⭐ SSS: {conteo['SSS']} | ⭐⭐⭐ S: {conteo['S']}\n"
@@ -219,31 +243,51 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto += "📜 **Tus últimas cartas obtenidas:**\n"
 
     for i, c in enumerate(user_cards[-10:], 1):
-        estrellas = RAREZAS[c["rareza"]]["estrellas"]
+        estrellas = RAREZAS.get(c["rareza"], {}).get("estrellas", c["rareza"])
         texto += f"{i}. `{c['id']}` - **{c['nombre']}** ({estrellas})\n"
 
-    msg = await update.message.reply_text(texto, parse_mode="Markdown")
-    ultimo_mensaje_inv[user.id] = msg.message_id
+    try:
+        msg = await context.bot.send_message(chat_id, texto, parse_mode="Markdown")
+        ultimo_mensaje_inv[user.id] = msg.message_id
+    except Exception as e:
+        logging.error(f"Error enviando mensaje de inventario: {e}")
+        try:
+            texto_limpio = texto.replace("**", "").replace("`", "").replace("_", "")
+            msg = await context.bot.send_message(chat_id, texto_limpio)
+            ultimo_mensaje_inv[user.id] = msg.message_id
+        except Exception as ex:
+            logging.error(f"Error crítico al enviar inventario: {ex}")
 
 async def dar_carta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await auto_borrar_comando(update)
     user = update.effective_user
+    chat_id = update.effective_chat.id
+
     if user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ No tienes permisos de administración.")
         return
 
     if not update.message.reply_to_message:
-        await update.message.reply_text("⚠️ **Modo de uso:** Responde al mensaje de la persona a la que quieres darle la carta y escribe `/dar ID_CARTA` (Ejemplo: `/dar c1`).")
+        msg = await context.bot.send_message(chat_id, "⚠️ **Modo de uso:** Responde al mensaje de la persona a la que quieres darle la carta y escribe `/dar ID_CARTA`.")
+        await asyncio.sleep(5)
+        try: await msg.delete()
+        except: pass
         return
 
     args = context.args
     if not args:
-        await update.message.reply_text("⚠️ Indica el ID de la carta. Ejemplo: `/dar c1`")
+        msg = await context.bot.send_message(chat_id, "⚠️ Indica el ID de la carta. Ejemplo: `/dar c1`")
+        await asyncio.sleep(5)
+        try: await msg.delete()
+        except: pass
         return
 
     carta_id = args[0]
     carta = next((c for c in CARTAS if c["id"] == carta_id), None)
     if not carta:
-        await update.message.reply_text(f"❌ No existe ninguna carta con el ID `{carta_id}`.")
+        msg = await context.bot.send_message(chat_id, f"❌ No existe ninguna carta con el ID `{carta_id}`.")
+        await asyncio.sleep(5)
+        try: await msg.delete()
+        except: pass
         return
 
     target_user = update.message.reply_to_message.from_user
@@ -254,42 +298,58 @@ async def dar_carta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inventarios[target_user.id].append(carta)
     info_rareza = RAREZAS[carta["rareza"]]["estrellas"]
 
-    await update.message.reply_text(
+    await context.bot.send_message(
+        chat_id,
         f"🎁 **¡CARTA OTORGADA!**\n\n"
         f"Se ha añadido **{carta['nombre']}** ({info_rareza}) directamente al inventario de @{target_user.username or target_user.first_name}."
     )
 
 async def quitar_carta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await auto_borrar_comando(update)
     user = update.effective_user
+    chat_id = update.effective_chat.id
+
     if user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ No tienes permisos de administración.")
         return
 
     if not update.message.reply_to_message:
-        await update.message.reply_text("⚠️ **Modo de uso:** Responde al mensaje de la persona a la que quieres quitarle la carta y escribe `/quitar ID_CARTA` (Ejemplo: `/quitar c1`).")
+        msg = await context.bot.send_message(chat_id, "⚠️ **Modo de uso:** Responde al mensaje de la persona a la que quieres quitarle la carta y escribe `/quitar ID_CARTA`.")
+        await asyncio.sleep(5)
+        try: await msg.delete()
+        except: pass
         return
 
     args = context.args
     if not args:
-        await update.message.reply_text("⚠️ Indica el ID de la carta. Ejemplo: `/quitar c1`")
+        msg = await context.bot.send_message(chat_id, "⚠️ Indica el ID de la carta. Ejemplo: `/quitar c1`")
+        await asyncio.sleep(5)
+        try: await msg.delete()
+        except: pass
         return
 
     carta_id = args[0]
     target_user = update.message.reply_to_message.from_user
 
     if target_user.id not in inventarios or not inventarios[target_user.id]:
-        await update.message.reply_text(f"❌ @{target_user.username or target_user.first_name} no tiene cartas en su inventario.")
+        msg = await context.bot.send_message(chat_id, f"❌ @{target_user.username or target_user.first_name} no tiene cartas en su inventario.")
+        await asyncio.sleep(5)
+        try: await msg.delete()
+        except: pass
         return
 
     user_cards = inventarios[target_user.id]
     carta_a_remover = next((c for c in user_cards if c["id"] == carta_id), None)
 
     if not carta_a_remover:
-        await update.message.reply_text(f"❌ El usuario no posee la carta con ID `{carta_id}`.")
+        msg = await context.bot.send_message(chat_id, f"❌ El usuario no posee la carta con ID `{carta_id}`.")
+        await asyncio.sleep(5)
+        try: await msg.delete()
+        except: pass
         return
 
     user_cards.remove(carta_a_remover)
-    await update.message.reply_text(
+    await context.bot.send_message(
+        chat_id,
         f"🗑️ Se ha removido la carta **{carta_a_remover['nombre']}** del inventario de @{target_user.username or target_user.first_name}."
     )
 
@@ -313,6 +373,7 @@ if __name__ == "__main__":
         # Contador de mensajes en grupos
         app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensajes_grupo))
 
-        print("🤖 Bot listo con drops automáticos y web server encendido...")
+        print("🤖 Bot listo con auto-borrado y web server encendido...")
         app.run_polling()
+
 
