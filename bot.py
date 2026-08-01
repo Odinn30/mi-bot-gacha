@@ -50,7 +50,7 @@ RAREZAS = {
 CARTAS = [
     {"id": "c1", "nombre": "Egirl Culona", "rareza": "B", "foto": "https://i.postimg.cc/Nf30gnv2/HMtb-GEibc-AACsx-U.jpg"},
     {"id": "c2", "nombre": "Nekotina", "rareza": "A", "foto": "https://i.postimg.cc/dtW678Vw/IMG-20260731-200048-385.jpg"},
-    {"id": "c3", "nombre": "Puta Barata", "rareza": "S", "foto": "https://i.postimg.cc/Nf30gnv2/HMtb-GEibc-AACsx-U.jpg"},
+    {"id": "c3", "nombre": "Puta Barata", "rareza": "S", "foto": "https://files.catbox.moe/lzqsn4.jpg"},
     {"id": "c4", "nombre": "China Cachonda", "rareza": "SSS", "foto": "https://i.postimg.cc/RVk0MYx6/HOZb3Mma-UAAV2t-K.jpg"},
 ]
 
