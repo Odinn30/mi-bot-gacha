@@ -50,8 +50,8 @@ RAREZAS = {
 }
 
 CARTAS = [
-    {"id": "c1", "nombre": "Guerrera Novata", "rareza": "B", "foto": "https://i.imgur.com/EJEMPLO1.jpg"},
-    {"id": "c2", "nombre": "Mago del Bosque", "rareza": "A", "foto": "https://i.imgur.com/EJEMPLO2.jpg"},
+    {"id": "c1", "nombre": "Egirl Culona", "rareza": "B", "foto": "https://i.postimg.cc/FsPpfjHh/IMG-20260731-200022-446.jpg"},
+    {"id": "c2", "nombre": "Nekotina", "rareza": "A", "foto": "https://i.postimg.cc/dtW678Vw/IMG-20260731-200048-385.jpg"},
     {"id": "c3", "nombre": "Caballero Oscuro", "rareza": "S", "foto": "https://i.imgur.com/EJEMPLO3.jpg"},
     {"id": "c4", "nombre": "Reina Celestial", "rareza": "SSS", "foto": "https://i.imgur.com/EJEMPLO4.jpg"},
     {"id": "c5", "nombre": "Deidad Suprema UR", "rareza": "UR", "foto": "https://i.imgur.com/EJEMPLO5.jpg"},
