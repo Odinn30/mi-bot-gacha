@@ -1,14 +1,24 @@
 import os
 import random
 import logging
+import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
 logging.basicConfig(level=logging.INFO)
 
-# --- SERVIDOR WEB FALSO PARA RENDER (Satisface el puerto web obligatorio) ---
+# ==============================================================================
+# 1. SERVIDOR WEB FALSO PARA RENDER (Mantiene el servicio activo en 'Live')
+# ==============================================================================
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
     class SimpleHandler(BaseHTTPRequestHandler):
@@ -21,7 +31,16 @@ def run_dummy_server():
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
-# --- 1. CONFIGURACIÓN DE CARTAS Y RAREZAS ---
+# ==============================================================================
+# 2. CONFIGURACIÓN DE ADMIN, RAREZAS, CARTAS Y AUTOMATIZACIÓN
+# ==============================================================================
+# ⚠️ CAMBIA ESTE NÚMERO POR TU ID REAL DE TELEGRAM
+ADMIN_ID = 5352886076 
+
+# Configuraciones de Drops Automáticos (Modifica según tu gusto)
+MENSAJES_PARA_DROP = 20    # Dropea una carta cada X mensajes en el chat
+MINUTOS_PARA_DROP = 45     # Dropea una carta si pasan X minutos sin importar la actividad
+
 RAREZAS = {
     "UR": {"peso": 1.5, "estrellas": "⭐⭐⭐⭐⭐ [UR]"},
     "SSS": {"peso": 8.5, "estrellas": "⭐⭐⭐⭐ [SSS]"},
@@ -31,19 +50,19 @@ RAREZAS = {
 }
 
 CARTAS = [
-    {"id": "c1", "nombre": "Culona de Prueba", "rareza": "B", "foto": "https://i.postimg.cc/027Xb6JN/HOD1Oyza4AAYo-Dw.jpg"},
-    {"id": "c2", "nombre": "Mago del Bosque", "rareza": "A", "foto": "https://t.me/c/4347933087/26"},
-    {"id": "c3", "nombre": "Caballero Oscuro", "rareza": "S", "foto": "https://t.me/c/4347933087/26"},
-    {"id": "c4", "nombre": "Reina Celestial", "rareza": "SSS", "foto": "https://t.me/c/4347933087/26"},
+    {"id": "c1", "nombre": "Egirl Culona", "rareza": "B", "foto": "https://i.postimg.cc/FsPpfjHh/IMG-20260731-200022-446.jpg"},
+    {"id": "c2", "nombre": "Nekotina", "rareza": "A", "foto": "https://i.postimg.cc/dtW678Vw/IMG-20260731-200048-385.jpg"},
+    {"id": "c3", "nombre": "Caballero Oscuro", "rareza": "S", "foto": "https://i.imgur.com/EJEMPLO3.jpg"},
+    {"id": "c4", "nombre": "Reina Celestial", "rareza": "SSS", "foto": "https://i.imgur.com/EJEMPLO4.jpg"},
     {"id": "c5", "nombre": "Deidad Suprema UR", "rareza": "UR", "foto": "https://i.imgur.com/EJEMPLO5.jpg"},
 ]
 
-inventarios = {}      
-carta_activa = {}     
-ultimo_mensaje_inv = {} 
-
-# ⚠️ ¡CAMBIA ESTE 123456789 POR TU ID REAL DE TELEGRAM!
-ADMIN_ID = 5352886076 
+# Almacenamiento temporal en memoria
+inventarios = {}          # { user_id: [carta1, carta2, ...] }
+carta_activa = {}         # { chat_id: carta_actual_sin_reclamar }
+ultimo_mensaje_inv = {}   # { user_id: message_id }
+contador_mensajes = {}    # { chat_id: int }
+tareas_tiempo = {}        # { chat_id: asyncio.Task }
 
 def elegir_carta_aleatoria():
     pool = []
@@ -53,55 +72,115 @@ def elegir_carta_aleatoria():
         pool.extend([carta] * peso)
     return random.choice(pool)
 
+async def ejecutar_drop(bot, chat_id, carta_forzada=None, motivo=""):
+    if carta_forzada:
+        carta = carta_forzada
+    else:
+        carta = elegir_carta_aleatoria()
+
+    carta_activa[chat_id] = carta
+    info_rareza = RAREZAS[carta["rareza"]]["estrellas"]
+
+    keyboard = [[InlineKeyboardButton("🃏 ¡RECLAMAR CARTA!", callback_data=f"claim_{carta['id']}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    subtitulo = f"\n_{motivo}_" if motivo else ""
+
+    await bot.send_photo(
+        chat_id=chat_id,
+        photo=carta["foto"],
+        caption=f"🚨 **¡UNA CARTA SALVAJE HA APARECIDO!** 🚨{subtitulo}\n\n"
+                f"🎴 **{carta['nombre']}**\n"
+                f"📊 Rareza: {info_rareza}\n\n"
+                f"_¡El primero en presionar el botón se la queda!_",
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+
+def reiniciar_temporizador_chat(app_or_context, chat_id):
+    if chat_id in tareas_tiempo and not tareas_tiempo[chat_id].done():
+        tareas_tiempo[chat_id].cancel()
+
+    bot = app_or_context.bot if hasattr(app_or_context, 'bot') else app_or_context
+
+    async def _loop_tiempo():
+        while True:
+            await asyncio.sleep(MINUTOS_PARA_DROP * 60)
+            await ejecutar_drop(bot, chat_id, motivo="Drop automático por tiempo de espera")
+            if chat_id in contador_mensajes:
+                contador_mensajes[chat_id] = 0
+
+    tareas_tiempo[chat_id] = asyncio.create_task(_loop_tiempo())
+
+# ==============================================================================
+# 3. COMANDOS Y MANEJADORES DE MENSAJES
+# ==============================================================================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    reiniciar_temporizador_chat(context, chat_id)
     await update.message.reply_text(
         "✨ **¡Bienvenido al Sistema de Gacha de Cartas!** ✨\n\n"
-        "Comandos disponibles:\n"
-        "• `/drop` - Intenta invocar una carta en el grupo.\n"
-        "• `/inventario` - Revisa tu colección de cartas.\n"
-        "• `/dar @usuario ID_carta` - (Admin) Da una carta por concurso.\n"
-        "• `/quitar @usuario ID_carta` - (Admin) Quita una carta."
+        "Comandos disponibles para todos:\n"
+        "• `/drop` - Hace aparecer una carta en el grupo.\n"
+        "• `/inventario` - Revisa tu colección de cartas.\n\n"
+        "Comandos de Administradora:\n"
+        "• `/drop ID_carta` - Fuerza la aparición de una carta específica.\n"
+        "• `/dar ID_carta` - (Respondiendo a un usuario) Otorga una carta directa.\n"
+        "• `/quitar ID_carta` - (Respondiendo a un usuario) Quita esa carta del inventario."
     )
 
 async def drop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    carta = elegir_carta_aleatoria()
-    carta_activa[chat_id] = carta
-    
-    info_rareza = RAREZAS[carta["rareza"]]["estrellas"]
-    
-    keyboard = [[InlineKeyboardButton("🃏 ¡RECLAMAR CARTA!", callback_data=f"claim_{carta['id']}")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await context.bot.send_photo(
-        chat_id=chat_id,
-        photo=carta["foto"],
-        caption=f"🚨 **¡UNA CARTA SALVAJE HA APARECIDO!** 🚨\n\n"
-                f"🎴 **{carta['nombre']}**\n"
-                f"📊 Rareza: {info_rareza}\n\n"
-                f"_¡El primero en presionar el botón se la queda!_",
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-    )
+    user = update.effective_user
+    args = context.args
+
+    carta_forzada = None
+    if args and user.id == ADMIN_ID:
+        carta_id = args[0]
+        carta_forzada = next((c for c in CARTAS if c["id"] == carta_id), None)
+        if not carta_forzada:
+            await update.message.reply_text(f"❌ No existe ninguna carta con el ID `{carta_id}`.")
+            return
+
+    await ejecutar_drop(context.bot, chat_id, carta_forzada=carta_forzada)
+    contador_mensajes[chat_id] = 0
+    reiniciar_temporizador_chat(context, chat_id)
+
+async def manejar_mensajes_grupo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
+        return
+
+    chat_id = update.effective_chat.id
+
+    if chat_id not in tareas_tiempo:
+        reiniciar_temporizador_chat(context, chat_id)
+
+    contador_mensajes[chat_id] = contador_mensajes.get(chat_id, 0) + 1
+
+    if contador_mensajes[chat_id] >= MENSAJES_PARA_DROP:
+        contador_mensajes[chat_id] = 0
+        await ejecutar_drop(context.bot, chat_id, motivo="Drop automático por actividad del grupo")
+        reiniciar_temporizador_chat(context, chat_id)
 
 async def claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     chat_id = query.message.chat_id
-    
+
     if chat_id not in carta_activa or carta_activa[chat_id] is None:
         await query.answer("❌ ¡Esta carta ya fue reclamada o expiró!", show_alert=True)
         return
 
     carta = carta_activa[chat_id]
-    carta_activa[chat_id] = None 
-    
+    carta_activa[chat_id] = None
+
     if user.id not in inventarios:
         inventarios[user.id] = []
     inventarios[user.id].append(carta)
-    
+
     info_rareza = RAREZAS[carta["rareza"]]["estrellas"]
-    
+
     await query.answer(f"🎉 ¡Felicidades! Has reclamado a {carta['nombre']}")
     await query.edit_message_caption(
         caption=f"✅ **CARTA RECLAMADA**\n\n"
@@ -114,12 +193,12 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
     user_cards = inventarios.get(user.id, [])
-    
+
     if user.id in ultimo_mensaje_inv:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=ultimo_mensaje_inv[user.id])
         except Exception:
-            pass 
+            pass
 
     if not user_cards:
         msg = await update.message.reply_text(f"📦 **Inventario de @{user.username or user.first_name}**\n\nNo tienes cartas en tu colección todavía. ¡Usa `/drop`!")
@@ -134,15 +213,15 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = f"📦 **COLECCIÓN DE CARTAS: @{user.username or user.first_name}**\n"
     texto += f"📊 **Total de cartas:** {len(user_cards)}\n"
     texto += "----------------------------------\n"
-    texto += f"🌟 UR: {conteo['UR']} | ⭐⭐⭐⭐ SSS: {conteo['SSS']} | ⭐⭐⭐ S/E: {conteo['S']}\n"
+    texto += f"🌟 UR: {conteo['UR']} | ⭐⭐⭐⭐ SSS: {conteo['SSS']} | ⭐⭐⭐ S: {conteo['S']}\n"
     texto += f"⭐⭐ A: {conteo['A']} | ⭐ B: {conteo['B']}\n"
     texto += "----------------------------------\n\n"
     texto += "📜 **Tus últimas cartas obtenidas:**\n"
-    
+
     for i, c in enumerate(user_cards[-10:], 1):
         estrellas = RAREZAS[c["rareza"]]["estrellas"]
         texto += f"{i}. `{c['id']}` - **{c['nombre']}** ({estrellas})\n"
-    
+
     msg = await update.message.reply_text(texto, parse_mode="Markdown")
     ultimo_mensaje_inv[user.id] = msg.message_id
 
@@ -151,35 +230,89 @@ async def dar_carta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id != ADMIN_ID:
         await update.message.reply_text("⛔ No tienes permisos de administración.")
         return
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text("⚠️ Uso correcto: `/dar @usuario id_carta`")
+
+    if not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ **Modo de uso:** Responde al mensaje de la persona a la que quieres darle la carta y escribe `/dar ID_CARTA` (Ejemplo: `/dar c1`).")
         return
-    mencion, carta_id = args[0], args[1]
-    carta_encontrada = next((c for c in CARTAS if c["id"] == carta_id), None)
-    if not carta_encontrada:
+
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ Indica el ID de la carta. Ejemplo: `/dar c1`")
+        return
+
+    carta_id = args[0]
+    carta = next((c for c in CARTAS if c["id"] == carta_id), None)
+    if not carta:
         await update.message.reply_text(f"❌ No existe ninguna carta con el ID `{carta_id}`.")
         return
-    await update.message.reply_text(f"🎁 Administradora otorgó la carta **{carta_encontrada['nombre']}** a {mencion}.")
+
+    target_user = update.message.reply_to_message.from_user
+
+    if target_user.id not in inventarios:
+        inventarios[target_user.id] = []
+
+    inventarios[target_user.id].append(carta)
+    info_rareza = RAREZAS[carta["rareza"]]["estrellas"]
+
+    await update.message.reply_text(
+        f"🎁 **¡CARTA OTORGADA!**\n\n"
+        f"Se ha añadido **{carta['nombre']}** ({info_rareza}) directamente al inventario de @{target_user.username or target_user.first_name}."
+    )
 
 async def quitar_carta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ No tienes permisos.")
+        await update.message.reply_text("⛔ No tienes permisos de administración.")
         return
-    await update.message.reply_text("🛠️ Función de ajuste de rework activada.")
 
+    if not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ **Modo de uso:** Responde al mensaje de la persona a la que quieres quitarle la carta y escribe `/quitar ID_CARTA` (Ejemplo: `/quitar c1`).")
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ Indica el ID de la carta. Ejemplo: `/quitar c1`")
+        return
+
+    carta_id = args[0]
+    target_user = update.message.reply_to_message.from_user
+
+    if target_user.id not in inventarios or not inventarios[target_user.id]:
+        await update.message.reply_text(f"❌ @{target_user.username or target_user.first_name} no tiene cartas en su inventario.")
+        return
+
+    user_cards = inventarios[target_user.id]
+    carta_a_remover = next((c for c in user_cards if c["id"] == carta_id), None)
+
+    if not carta_a_remover:
+        await update.message.reply_text(f"❌ El usuario no posee la carta con ID `{carta_id}`.")
+        return
+
+    user_cards.remove(carta_a_remover)
+    await update.message.reply_text(
+        f"🗑️ Se ha removido la carta **{carta_a_remover['nombre']}** del inventario de @{target_user.username or target_user.first_name}."
+    )
+
+# ==============================================================================
+# 4. INICIALIZACIÓN DEL BOT
+# ==============================================================================
 if __name__ == "__main__":
     TOKEN = os.environ.get("TELEGRAM_TOKEN")
     if not TOKEN:
-        print("Error: Falta el TELEGRAM_TOKEN.")
+        print("Error: Falta la variable de entorno TELEGRAM_TOKEN.")
     else:
         app = ApplicationBuilder().token(TOKEN).build()
+
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("drop", drop))
         app.add_handler(CommandHandler("inventario", inventario))
         app.add_handler(CommandHandler("dar", dar_carta))
         app.add_handler(CommandHandler("quitar", quitar_carta))
         app.add_handler(CallbackQueryHandler(claim_callback, pattern="^claim_"))
-        print("🤖 Bot listo y web server encendido...")
+
+        # Contador de mensajes en grupos
+        app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensajes_grupo))
+
+        print("🤖 Bot listo con drops automáticos y web server encendido...")
         app.run_polling()
+
