@@ -51,8 +51,7 @@ CARTAS = [
     {"id": "c1", "nombre": "Egirl Culona", "rareza": "B", "foto": "AgACAgEAAxkBAAEtFOJqbVSecy98r-M9Lxj1MR-5FRa7SwACfgxrG057aUes_Cb1mco0NQEAAwIAA3MAAz0E"},
     {"id": "c2", "nombre": "Nekotina", "rareza": "A", "foto": "https://i.postimg.cc/dtW678Vw/IMG-20260731-200048-385.jpg"},
     {"id": "c3", "nombre": "Puta Barata", "rareza": "S", "foto": "https://files.catbox.moe/lzqsn4.jpg"},
-    {"id": "c4", "nombre": "Hane, Office Thot", "rareza": "SSS", "foto": "AgACAgEAAxkBAAEtFP5qVjgzNv4Zbe3YtTcGz--GYJZTAAC2A5rGyE2aEdoER9Ivoy93AEAAwIAa3gAaZ0E
-"},
+    {"id": "c4", "nombre": "Hane, Office Thot", "rareza": "SSS", "foto": "AgACAgEAAxkBAAEtFP5qVjgzNv4Zbe3YtTcGz--GYJZTAAC2A5rGyE2aEdoER9Ivoy93AEAAwIAa3gAaZ0E"},
 ]
 
 inventarios = {}          
@@ -449,17 +448,64 @@ async def quitar_carta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
+# ==============================================================================
+# 5. COMANDO PARA OBTENER FILE_ID
+# ==============================================================================
+async def obtener_id_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await auto_borrar_comando(update)
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+
+    if user.id != ADMIN_ID:
+        return
+
+    if not update.message.reply_to_message or not update.message.reply_to_message.photo:
+        msg = await context.bot.send_message(
+            chat_id, 
+            "⚠️ Responde a una foto escribiendo <code>/id</code> para obtener su File ID.",
+            parse_mode="HTML"
+        )
+        await asyncio.sleep(5)
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+        return
+
+    foto = update.message.reply_to_message.photo[-1]
+    file_id = foto.file_id
+
+    await context.bot.send_message(
+        chat_id,
+        f"✅ <b>File ID generado para tu bot:</b>\n\n"
+        f"<code>{file_id}</code>\n\n"
+        f"<i>(Toca el código arriba para copiarlo automáticamente)</i>",
+        parse_mode="HTML"
+    )
+
+# ==============================================================================
+# 6. INICIALIZACIÓN
+# ==============================================================================
 if __name__ == "__main__":
     TOKEN = os.environ.get("TELEGRAM_TOKEN")
     if TOKEN:
         app = ApplicationBuilder().token(TOKEN).build()
+        
+        # Comandos existentes
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("drop", drop))
         app.add_handler(CommandHandler("inventario", inventario))
         app.add_handler(CommandHandler("dar", dar_carta))
         app.add_handler(CommandHandler("quitar", quitar_carta))
+        
+        # Nuevo comando para extraer File ID
+        app.add_handler(CommandHandler("id", obtener_id_foto))
+        
+        # Handlers de callbacks y mensajes
         app.add_handler(CallbackQueryHandler(claim_callback, pattern="^claim_"))
         app.add_handler(CallbackQueryHandler(inventario_callback, pattern="^inv_"))
         app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensajes_grupo))
+        
         print("🤖 Bot iniciado...")
         app.run_polling()
+        
