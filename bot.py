@@ -17,7 +17,7 @@ from telegram.ext import (
 logging.basicConfig(level=logging.INFO)
 
 # ==============================================================================
-# 1. SERVIDOR WEB FALSO PARA RENDER (Mantiene el servicio activo en 'Live')
+# 1. SERVIDOR WEB FALSO PARA RENDER
 # ==============================================================================
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -32,14 +32,12 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 # ==============================================================================
-# 2. CONFIGURACIÓN DE ADMIN, RAREZAS, CARTAS Y AUTOMATIZACIÓN
+# 2. CONFIGURACIÓN DE ADMIN, RAREZAS Y CARTAS
 # ==============================================================================
-# ⚠️ CAMBIA ESTE NÚMERO POR TU ID REAL DE TELEGRAM
-ADMIN_ID = 5352886076 
+ADMIN_ID = 5352886076  # Tu Telegram ID configurado
 
-# Configuraciones de Drops Automáticos
-MENSAJES_PARA_DROP = 20    # Dropea una carta cada X mensajes en el chat
-MINUTOS_PARA_DROP = 45     # Dropea una carta si pasan X minutos sin importar la actividad
+MENSAJES_PARA_DROP = 20
+MINUTOS_PARA_DROP = 45
 
 RAREZAS = {
     "UR": {"peso": 1.5, "estrellas": "⭐⭐⭐⭐⭐ [UR]"},
@@ -54,16 +52,14 @@ CARTAS = [
     {"id": "c2", "nombre": "Nekotina", "rareza": "A", "foto": "https://i.postimg.cc/dtW678Vw/IMG-20260731-200048-385.jpg"},
     {"id": "c3", "nombre": "Puta Barata", "rareza": "S", "foto": "https://i.postimg.cc/Nf30gnv2/HMtb-GEibc-AACsx-U.jpg"},
     {"id": "c4", "nombre": "China Cachonda", "rareza": "SSS", "foto": "https://i.postimg.cc/RVk0MYx6/HOZb3Mma-UAAV2t-K.jpg"},
-    {"id": "c5", "nombre": "Deidad Suprema UR", "rareza": "UR", "foto": "https://i.imgur.com/EJEMPLO5.jpg"},
 ]
 
-# Almacenamiento temporal en memoria
-inventarios = {}          # { user_id: [carta1, carta2, ...] }
-carta_activa = {}         # { chat_id: carta_actual_sin_reclamar }
-ultimo_mensaje_inv = {}   # { user_id: message_id }
-estado_inv_usuario = {}   # { user_id: {"index": int, "filtro": str} }
-contador_mensajes = {}    # { chat_id: int }
-tareas_tiempo = {}        # { chat_id: asyncio.Task }
+inventarios = {}          
+carta_activa = {}         
+ultimo_mensaje_inv = {}   
+estado_inv_usuario = {}   
+contador_mensajes = {}    
+tareas_tiempo = {}        
 
 def elegir_carta_aleatoria():
     pool = []
@@ -74,7 +70,6 @@ def elegir_carta_aleatoria():
     return random.choice(pool)
 
 async def auto_borrar_comando(update: Update):
-    """Elimina el mensaje de comando para mantener pulcro el grupo."""
     if update.message and update.effective_chat.type in ["group", "supergroup"]:
         try:
             await update.message.delete()
@@ -82,29 +77,37 @@ async def auto_borrar_comando(update: Update):
             pass
 
 async def ejecutar_drop(bot, chat_id, carta_forzada=None, motivo=""):
-    if carta_forzada:
-        carta = carta_forzada
-    else:
-        carta = elegir_carta_aleatoria()
-
+    carta = carta_forzada if carta_forzada else elegir_carta_aleatoria()
     carta_activa[chat_id] = carta
-    info_rareza = RAREZAS[carta["rareza"]]["estrellas"]
+    info_rareza = RAREZAS.get(carta["rareza"], {}).get("estrellas", carta["rareza"])
 
     keyboard = [[InlineKeyboardButton("🃏 ¡RECLAMAR CARTA!", callback_data=f"claim_{carta['id']}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    subtitulo = f"\n<i>{motivo}</i>" if motivo else ""
 
-    subtitulo = f"\n_{motivo}_" if motivo else ""
-
-    await bot.send_photo(
-        chat_id=chat_id,
-        photo=carta["foto"],
-        caption=f"🚨 **¡UNA CARTA SALVAJE HA APARECIDO!** 🚨{subtitulo}\n\n"
-                f"🎴 **{carta['nombre']}**\n"
-                f"📊 Rareza: {info_rareza}\n\n"
-                f"_¡El primero en presionar el botón se la queda!_",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
+    caption = (
+        f"🚨 <b>¡UNA CARTA SALVAJE HA APARECIDO!</b> 🚨{subtitulo}\n\n"
+        f"🎴 <b>{carta['nombre']}</b>\n"
+        f"📊 Rareza: {info_rareza}\n\n"
+        f"<i>¡El primero en presionar el botón se la queda!</i>"
     )
+
+    try:
+        await bot.send_photo(
+            chat_id=chat_id,
+            photo=carta["foto"],
+            caption=caption,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logging.error(f"Error al enviar la carta: {e}")
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"⚠️ (Error cargando imagen)\n\n{caption}",
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
 
 def reiniciar_temporizador_chat(app_or_context, chat_id):
     if chat_id in tareas_tiempo and not tareas_tiempo[chat_id].done():
@@ -115,39 +118,30 @@ def reiniciar_temporizador_chat(app_or_context, chat_id):
     async def _loop_tiempo():
         while True:
             await asyncio.sleep(MINUTOS_PARA_DROP * 60)
-            await ejecutar_drop(bot, chat_id, motivo="Drop automático por tiempo de espera")
+            await ejecutar_drop(bot, chat_id, motivo="Drop automático por tiempo")
             if chat_id in contador_mensajes:
                 contador_mensajes[chat_id] = 0
 
     tareas_tiempo[chat_id] = asyncio.create_task(_loop_tiempo())
 
 # ==============================================================================
-# 3. NAVEGACIÓN DE INVENTARIO Y MENÚS
+# 3. NAVEGACIÓN DE INVENTARIO
 # ==============================================================================
 
 def generar_vista_inventario(user_id, user_name):
-    """Genera la foto, el texto explicativo y los botones para navegar el inventario."""
     todas_las_cartas = inventarios.get(user_id, [])
-    
     if not todas_las_cartas:
         return None, None, None
 
     estado = estado_inv_usuario.get(user_id, {"index": 0, "filtro": "TODAS"})
     filtro = estado["filtro"]
 
-    # Filtrar cartas según selección
-    if filtro == "TODAS":
-        cartas_filtradas = todas_las_cartas
-    else:
-        cartas_filtradas = [c for c in todas_las_cartas if c["rareza"] == filtro]
-
+    cartas_filtradas = todas_las_cartas if filtro == "TODAS" else [c for c in todas_las_cartas if c["rareza"] == filtro]
     if not cartas_filtradas:
-        # Si no hay cartas de esa rareza, resetea a TODAS
         cartas_filtradas = todas_las_cartas
         filtro = "TODAS"
         estado["filtro"] = "TODAS"
 
-    # Consolidar cartas únicas y sus cantidades
     conteo_cartas = {}
     cartas_unicas = []
     for c in cartas_filtradas:
@@ -167,22 +161,19 @@ def generar_vista_inventario(user_id, user_name):
     info_rareza = RAREZAS.get(carta_actual["rareza"], {}).get("estrellas", carta_actual["rareza"])
 
     caption = (
-        f"📦 **INVENTARIO INTERACTIVO DE @{user_name}**\n\n"
-        f"🎴 **{carta_actual['nombre']}** (`{carta_actual['id']}`)\n"
+        f"📦 <b>INVENTARIO INTERACTIVO DE @{user_name}</b>\n\n"
+        f"🎴 <b>{carta_actual['nombre']}</b> (<code>{carta_actual['id']}</code>)\n"
         f"📊 Rareza: {info_rareza}\n"
-        f"🔢 Tienes en posesión: **x{cantidad_copias}**\n"
-        f"📑 Carta **{idx + 1}** de **{len(cartas_unicas)}** (Filtro: `{filtro}`)\n"
-        f"✨ Total en tu colección: **{len(todas_las_cartas)}** cartas"
+        f"🔢 Tienes en posesión: <b>x{cantidad_copias}</b>\n"
+        f"📑 Carta <b>{idx + 1}</b> de <b>{len(cartas_unicas)}</b> (Filtro: <code>{filtro}</code>)\n"
+        f"✨ Total en tu colección: <b>{len(todas_las_cartas)}</b> cartas"
     )
 
-    # Botones de navegación
     row_nav = [
         InlineKeyboardButton("◀", callback_data=f"inv_nav_{user_id}_prev"),
         InlineKeyboardButton(f"{idx + 1}/{len(cartas_unicas)}", callback_data="inv_noop"),
         InlineKeyboardButton("▶", callback_data=f"inv_nav_{user_id}_next"),
     ]
-
-    # Botones de filtro de rareza
     row_filtros = [
         InlineKeyboardButton("TODAS", callback_data=f"inv_flt_{user_id}_TODAS"),
         InlineKeyboardButton("UR", callback_data=f"inv_flt_{user_id}_UR"),
@@ -191,8 +182,6 @@ def generar_vista_inventario(user_id, user_name):
         InlineKeyboardButton("A", callback_data=f"inv_flt_{user_id}_A"),
         InlineKeyboardButton("B", callback_data=f"inv_flt_{user_id}_B"),
     ]
-
-    # Botón de compartir en el chat público
     row_share = [
         InlineKeyboardButton("📢 Compartir esta carta en el chat", callback_data=f"inv_share_{user_id}_{carta_actual['id']}")
     ]
@@ -201,7 +190,7 @@ def generar_vista_inventario(user_id, user_name):
     return carta_actual["foto"], caption, reply_markup
 
 # ==============================================================================
-# 4. COMANDOS Y MANEJADORES DE EVENTOS
+# 4. COMANDOS Y EVENTOS
 # ==============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -209,14 +198,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     reiniciar_temporizador_chat(context, chat_id)
     await update.message.reply_text(
-        "✨ **¡Bienvenido al Sistema de Gacha de Cartas!** ✨\n\n"
+        "✨ <b>¡Bienvenido al Sistema de Gacha de Cartas!</b> ✨\n\n"
         "Comandos disponibles:\n"
-        "• `/drop` - Genera una carta en el grupo.\n"
-        "• `/inventario` - Abre tu panel visual de cartas e inventario.\n\n"
-        "Comandos de Administradora:\n"
-        "• `/drop ID_carta` - Fuerza la aparición de una carta específica.\n"
-        "• `/dar ID_carta` - (Respondiendo) Otorga una carta a un miembro.\n"
-        "• `/quitar ID_carta` - (Respondiendo) Elimina una carta del inventario."
+        "• <code>/drop</code> - Genera una carta en el grupo.\n"
+        "• <code>/inventario</code> - Abre tu panel visual de cartas e inventario.",
+        parse_mode="HTML"
     )
 
 async def drop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -230,7 +216,7 @@ async def drop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         carta_id = args[0]
         carta_forzada = next((c for c in CARTAS if c["id"] == carta_id), None)
         if not carta_forzada:
-            msg = await context.bot.send_message(chat_id, f"❌ No existe ninguna carta con el ID `{carta_id}`.")
+            msg = await context.bot.send_message(chat_id, f"❌ No existe ninguna carta con el ID <code>{carta_id}</code>.", parse_mode="HTML")
             await asyncio.sleep(5)
             try: await msg.delete()
             except: pass
@@ -246,7 +232,6 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     nombre_usuario = user.username or user.first_name
 
-    # Borra la ventana de inventario previa enviada para mantener orden
     if user.id in ultimo_mensaje_inv:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=ultimo_mensaje_inv[user.id])
@@ -257,13 +242,13 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_cards:
         msg = await context.bot.send_message(
             chat_id,
-            f"📦 **Inventario de @{nombre_usuario}**\n\n"
-            "Tu colección está vacía actualmente. ¡Atrapa cartas presionando el botón de drop!"
+            f"📦 <b>Inventario de @{nombre_usuario}</b>\n\n"
+            "Tu colección está vacía actualmente. ¡Atrapa cartas presionando el botón de drop!",
+            parse_mode="HTML"
         )
         ultimo_mensaje_inv[user.id] = msg.message_id
         return
 
-    # Inicializar estado por defecto si no existe
     if user.id not in estado_inv_usuario:
         estado_inv_usuario[user.id] = {"index": 0, "filtro": "TODAS"}
 
@@ -275,11 +260,18 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE):
             photo=foto,
             caption=caption,
             reply_markup=reply_markup,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         ultimo_mensaje_inv[user.id] = msg.message_id
     except Exception as e:
-        logging.error(f"Error al desplegar menú de inventario: {e}")
+        logging.error(f"Falló al enviar foto del inventario: {e}")
+        msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=caption,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        ultimo_mensaje_inv[user.id] = msg.message_id
 
 async def inventario_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -291,10 +283,9 @@ async def inventario_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     partes = data.split("_")
-    accion = partes[1]       # nav, flt, o share
+    accion = partes[1]
     target_user_id = int(partes[2])
 
-    # Control de seguridad: solo el dueño puede interactuar
     if clicker_id != target_user_id:
         await query.answer("❌ Este no es tu inventario. Escribe /inventario para abrir el tuyo.", show_alert=True)
         return
@@ -304,10 +295,7 @@ async def inventario_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if accion == "nav":
         direccion = partes[3]
         estado = estado_inv_usuario.get(clicker_id, {"index": 0, "filtro": "TODAS"})
-        if direccion == "next":
-            estado["index"] += 1
-        elif direccion == "prev":
-            estado["index"] -= 1
+        estado["index"] += 1 if direccion == "next" else -1
         estado_inv_usuario[clicker_id] = estado
 
     elif accion == "flt":
@@ -321,29 +309,37 @@ async def inventario_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if carta:
             copias = sum(1 for c in cartas_usuario if c["id"] == carta_id)
             info_rareza = RAREZAS.get(carta["rareza"], {}).get("estrellas", carta["rareza"])
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=carta["foto"],
-                caption=f"✨ **@{user_name} MUESTRA SU CARTA:**\n\n"
-                        f"🎴 **{carta['nombre']}** (`{carta['id']}`)\n"
-                        f"📊 Rareza: {info_rareza}\n"
-                        f"🔢 Copias acumuladas: **x{copias}**",
-                parse_mode="Markdown"
-            )
+            try:
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id,
+                    photo=carta["foto"],
+                    caption=f"✨ <b>@{user_name} MUESTRA SU CARTA:</b>\n\n"
+                            f"🎴 <b>{carta['nombre']}</b> (<code>{carta['id']}</code>)\n"
+                            f"📊 Rareza: {info_rareza}\n"
+                            f"🔢 Copias acumuladas: <b>x{copias}</b>",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"✨ <b>@{user_name} MUESTRA SU CARTA:</b>\n\n"
+                         f"🎴 <b>{carta['nombre']}</b> (<code>{carta['id']}</code>)\n"
+                         f"📊 Rareza: {info_rareza}\n"
+                         f"🔢 Copias acumuladas: <b>x{copias}</b>",
+                    parse_mode="HTML"
+                )
             await query.answer("📢 ¡Carta compartida con el grupo!")
         return
 
-    # Actualiza la vista existente sin reenviar un mensaje nuevo
     foto, caption, reply_markup = generar_vista_inventario(clicker_id, user_name)
     if foto:
         try:
             from telegram import InputMediaPhoto
             await query.edit_message_media(
-                media=InputMediaPhoto(media=foto, caption=caption, parse_mode="Markdown"),
+                media=InputMediaPhoto(media=foto, caption=caption, parse_mode="HTML"),
                 reply_markup=reply_markup
             )
-        except Exception as e:
-            logging.error(f"Error editando mensaje de inventario: {e}")
+        except Exception:
             await query.answer()
 
 async def manejar_mensajes_grupo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -378,60 +374,51 @@ async def claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         inventarios[user.id] = []
     inventarios[user.id].append(carta)
 
-    info_rareza = RAREZAS[carta["rareza"]]["estrellas"]
+    info_rareza = RAREZAS.get(carta["rareza"], {}).get("estrellas", carta["rareza"])
 
     await query.answer(f"🎉 ¡Felicidades! Has reclamado a {carta['nombre']}")
-    await query.edit_message_caption(
-        caption=f"✅ **CARTA RECLAMADA**\n\n"
-                f"🎴 **{carta['nombre']}** ({info_rareza})\n"
-                f"👤 Dueño actual: @{user.username or user.first_name}",
-        reply_markup=None
-    )
+    try:
+        await query.edit_message_caption(
+            caption=f"✅ <b>CARTA RECLAMADA</b>\n\n"
+                    f"🎴 <b>{carta['nombre']}</b> ({info_rareza})\n"
+                    f"👤 Dueño actual: @{user.username or user.first_name}",
+            reply_markup=None,
+            parse_mode="HTML"
+        )
+    except Exception:
+        await query.edit_message_text(
+            text=f"✅ <b>CARTA RECLAMADA</b>\n\n"
+                 f"🎴 <b>{carta['nombre']}</b> ({info_rareza})\n"
+                 f"👤 Dueño actual: @{user.username or user.first_name}",
+            reply_markup=None,
+            parse_mode="HTML"
+        )
 
 async def dar_carta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await auto_borrar_comando(update)
     user = update.effective_user
     chat_id = update.effective_chat.id
 
-    if user.id != ADMIN_ID:
+    if user.id != ADMIN_ID or not update.message.reply_to_message or not context.args:
         return
 
-    if not update.message.reply_to_message:
-        msg = await context.bot.send_message(chat_id, "⚠️ **Modo de uso:** Responde al mensaje del usuario y escribe `/dar ID_CARTA`.")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except: pass
-        return
-
-    args = context.args
-    if not args:
-        msg = await context.bot.send_message(chat_id, "⚠️ Indica el ID de la carta. Ejemplo: `/dar c1`")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except: pass
-        return
-
-    carta_id = args[0]
+    carta_id = context.args[0]
     carta = next((c for c in CARTAS if c["id"] == carta_id), None)
     if not carta:
-        msg = await context.bot.send_message(chat_id, f"❌ No existe ninguna carta con el ID `{carta_id}`.")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except: pass
         return
 
     target_user = update.message.reply_to_message.from_user
-
     if target_user.id not in inventarios:
         inventarios[target_user.id] = []
 
     inventarios[target_user.id].append(carta)
-    info_rareza = RAREZAS[carta["rareza"]]["estrellas"]
+    info_rareza = RAREZAS.get(carta["rareza"], {}).get("estrellas", carta["rareza"])
 
     await context.bot.send_message(
         chat_id,
-        f"🎁 **¡CARTA OTORGADA!**\n\n"
-        f"Se ha añadido **{carta['nombre']}** ({info_rareza}) al inventario de @{target_user.username or target_user.first_name}."
+        f"🎁 <b>¡CARTA OTORGADA!</b>\n\n"
+        f"Se ha añadido <b>{carta['nombre']}</b> ({info_rareza}) al inventario de @{target_user.username or target_user.first_name}.",
+        parse_mode="HTML"
     )
 
 async def quitar_carta(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -439,72 +426,39 @@ async def quitar_carta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
 
-    if user.id != ADMIN_ID:
+    if user.id != ADMIN_ID or not update.message.reply_to_message or not context.args:
         return
 
-    if not update.message.reply_to_message:
-        msg = await context.bot.send_message(chat_id, "⚠️ **Modo de uso:** Responde al mensaje del usuario y escribe `/quitar ID_CARTA`.")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except: pass
-        return
-
-    args = context.args
-    if not args:
-        msg = await context.bot.send_message(chat_id, "⚠️ Indica el ID de la carta. Ejemplo: `/quitar c1`")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except: pass
-        return
-
-    carta_id = args[0]
+    carta_id = context.args[0]
     target_user = update.message.reply_to_message.from_user
 
     if target_user.id not in inventarios or not inventarios[target_user.id]:
-        msg = await context.bot.send_message(chat_id, f"❌ @{target_user.username or target_user.first_name} no tiene cartas en su inventario.")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except: pass
         return
 
     user_cards = inventarios[target_user.id]
     carta_a_remover = next((c for c in user_cards if c["id"] == carta_id), None)
 
     if not carta_a_remover:
-        msg = await context.bot.send_message(chat_id, f"❌ El usuario no posee la carta con ID `{carta_id}`.")
-        await asyncio.sleep(5)
-        try: await msg.delete()
-        except: pass
         return
 
     user_cards.remove(carta_a_remover)
     await context.bot.send_message(
         chat_id,
-        f"🗑️ Se ha removido la carta **{carta_a_remover['nombre']}** del inventario de @{target_user.username or target_user.first_name}."
+        f"🗑️ Se ha removido la carta <b>{carta_a_remover['nombre']}</b> del inventario de @{target_user.username or target_user.first_name}.",
+        parse_mode="HTML"
     )
 
-# ==============================================================================
-# 5. INICIALIZACIÓN DEL BOT
-# ==============================================================================
 if __name__ == "__main__":
     TOKEN = os.environ.get("TELEGRAM_TOKEN")
-    if not TOKEN:
-        print("Error: Falta la variable de entorno TELEGRAM_TOKEN.")
-    else:
+    if TOKEN:
         app = ApplicationBuilder().token(TOKEN).build()
-
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("drop", drop))
         app.add_handler(CommandHandler("inventario", inventario))
         app.add_handler(CommandHandler("dar", dar_carta))
         app.add_handler(CommandHandler("quitar", quitar_carta))
-        
-        # Callbacks para reclamo de cartas y panel interactivo del inventario
         app.add_handler(CallbackQueryHandler(claim_callback, pattern="^claim_"))
         app.add_handler(CallbackQueryHandler(inventario_callback, pattern="^inv_"))
-
-        # Manejador de contador de mensajes de grupo
         app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), manejar_mensajes_grupo))
-
-        print("🤖 Bot listo con inventario visual e interactivo desplegado...")
+        print("🤖 Bot iniciado...")
         app.run_polling()
